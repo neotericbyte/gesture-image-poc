@@ -84,24 +84,31 @@ class GestureImage extends HTMLElement {
 
 		const rect = this.container.getBoundingClientRect();
 
+		const finalScale = this.baseScale * this.userScale;
+
+		// 👇 how much the image is scaled on screen
+		const displayedWidth = img.width * finalScale;
+		const displayedHeight = img.height * finalScale;
+
+		// 👇 ratio from screen → original pixels
+		const ratioX = img.width / displayedWidth;
+		const ratioY = img.height / displayedHeight;
+
+		// 👇 export canvas in ORIGINAL quality
 		const canvas = document.createElement("canvas");
 		const ctx = canvas.getContext("2d");
 
-		// ✅ canvas = visible frame
-		canvas.width = rect.width;
-		canvas.height = rect.height;
+		canvas.width = rect.width * ratioX;
+		canvas.height = rect.height * ratioY;
 
-		const finalScale = this.baseScale * this.userScale;
-
-		// move origin to center of frame
+		// move to center
 		ctx.translate(canvas.width / 2, canvas.height / 2);
 
-		// apply SAME transform order
-		ctx.translate(this.x, this.y);
+		// apply same transform BUT scaled to original resolution
+		ctx.translate(this.x * ratioX, this.y * ratioY);
 		ctx.rotate(this.rotation * Math.PI / 180);
-		ctx.scale(finalScale, finalScale);
+		ctx.scale(finalScale * ratioX, finalScale * ratioY);
 
-		// draw image centered
 		ctx.drawImage(
 			img,
 			-img.width / 2,
