@@ -36,6 +36,7 @@
 			text-align: center;
 			border-bottom: 1px solid #333;
 			background: #181818;
+			font-weight: 600;
 		}
 
 		.editor-container {
@@ -57,10 +58,17 @@
 		}
 
 		.controls {
-			display: flex;
-			gap: 10px;
 			padding: 12px;
 			background: #181818;
+			border-top: 1px solid #333;
+			display: flex;
+			flex-direction: column;
+			gap: 12px;
+		}
+
+		.row {
+			display: flex;
+			gap: 10px;
 		}
 
 		button,
@@ -72,9 +80,6 @@
 			font-size: 14px;
 			text-align: center;
 			cursor: pointer;
-		}
-
-		button {
 			background: #2a2a2a;
 			color: #fff;
 		}
@@ -87,13 +92,48 @@
 			background: #2196f3;
 		}
 
-		input {
+		input[type="file"] {
 			display: none;
 		}
 
-		.preview img {
-			width: 120px;
-			margin-top: 10px;
+		/* 🎚 Slider UI */
+		.slider-group {
+			display: flex;
+			flex-direction: column;
+			gap: 6px;
+		}
+
+		.slider-label {
+			font-size: 12px;
+			color: #aaa;
+			display: flex;
+			justify-content: space-between;
+		}
+
+		input[type="range"] {
+			width: 100%;
+			appearance: none;
+			height: 6px;
+			border-radius: 6px;
+			background: #333;
+			outline: none;
+		}
+
+		input[type="range"]::-webkit-slider-thumb {
+			appearance: none;
+			width: 18px;
+			height: 18px;
+			border-radius: 50%;
+			background: #4caf50;
+			cursor: pointer;
+		}
+
+		input[type="range"]::-moz-range-thumb {
+			width: 18px;
+			height: 18px;
+			border-radius: 50%;
+			background: #4caf50;
+			cursor: pointer;
 		}
 	</style>
 </head>
@@ -102,78 +142,77 @@
 
 	<div class="app">
 
-		<div class="header">Image Editor POC</div>
+		<div class="header">Image Editor</div>
 
 		<div class="editor-container">
 			<gesture-image id="editor"></gesture-image>
 		</div>
 
 		<div class="controls">
-			<label class="upload">
-				Upload
-				<input type="file" id="fileInput" accept="image/*">
-			</label>
 
-			<button onclick="resetImage()">Reset</button>
-			<button class="primary" onclick="exportImage()">Export</button>
+			<!-- Upload / Reset / Export -->
+			<div class="row">
+				<label class="upload">
+					Upload
+					<input type="file" id="fileInput" accept="image/*">
+				</label>
+				<button onclick="reset()">Reset</button>
+				<button class="primary" onclick="exportImage()">Export</button>
+			</div>
+
+			<!-- Zoom Slider -->
+			<div class="slider-group">
+				<div class="slider-label">
+					<span>Zoom</span>
+					<span id="zoomVal">1.00x</span>
+				</div>
+				<input type="range" id="zoomSlider" min="0.5" max="3" step="0.01" value="1">
+			</div>
+
+			<!-- Rotate Slider -->
+			<div class="slider-group">
+				<div class="slider-label">
+					<span>Rotate</span>
+					<span id="rotateVal">0°</span>
+				</div>
+				<input type="range" id="rotateSlider" min="-180" max="180" step="1" value="0">
+			</div>
+
 		</div>
-
-		<div class="preview" id="preview"></div>
 
 	</div>
 
 	<script>
 		const editor = document.getElementById("editor");
 		const fileInput = document.getElementById("fileInput");
-		const preview = document.getElementById("preview");
 
-		// Resize before load (important)
-		function resizeImage(file, maxSize = 1200) {
-			return new Promise((resolve) => {
-				const img = new Image();
-				const reader = new FileReader();
+		const zoomSlider = document.getElementById("zoomSlider");
+		const rotateSlider = document.getElementById("rotateSlider");
 
-				reader.onload = () => img.src = reader.result;
+		const zoomVal = document.getElementById("zoomVal");
+		const rotateVal = document.getElementById("rotateVal");
 
-				img.onload = () => {
-					const canvas = document.createElement("canvas");
-					const ctx = canvas.getContext("2d");
-
-					let { width, height } = img;
-
-					if (width > height && width > maxSize) {
-						height *= maxSize / width;
-						width = maxSize;
-					} else if (height > maxSize) {
-						width *= maxSize / height;
-						height = maxSize;
-					}
-
-					canvas.width = width;
-					canvas.height = height;
-
-					ctx.drawImage(img, 0, 0, width, height);
-					resolve(canvas.toDataURL("image/jpeg", 0.9));
-				};
-
-				reader.readAsDataURL(file);
-			});
-		}
+		// Load default
+		editor.setImage("https://picsum.photos/800/1200");
 
 		// Upload
 		fileInput.addEventListener("change", async (e) => {
 			const file = e.target.files[0];
 			if (!file) return;
 
-			const resized = await resizeImage(file);
-			editor.setImage(resized);
+			const reader = new FileReader();
+			reader.onload = () => editor.setImage(reader.result);
+			reader.readAsDataURL(file);
 
 			fileInput.value = "";
 		});
 
 		// Reset
-		function resetImage() {
-			editor.setImage(editor.img?.src);
+		function reset() {
+			editor.resetTransform();
+			zoomSlider.value = 1;
+			rotateSlider.value = 0;
+			updateLabels();
 		}
 
 		// Export
@@ -183,21 +222,32 @@
 			const link = document.createElement("a");
 			link.href = data;
 			link.download = `image-${Date.now()}.png`;
-
-			link.click(); // ✅ direct trigger
+			link.click();
 		}
 
-		/* Zoom blockers (mobile) */
+		// Zoom control
+		zoomSlider.addEventListener("input", () => {
+			const val = parseFloat(zoomSlider.value);
+			editor.setZoom(val);
+			updateLabels();
+		});
+
+		// Rotate control
+		rotateSlider.addEventListener("input", () => {
+			const val = parseFloat(rotateSlider.value);
+			editor.setRotation(val);
+			updateLabels();
+		});
+
+		function updateLabels() {
+			zoomVal.innerText = zoomSlider.value + "x";
+			rotateVal.innerText = rotateSlider.value + "°";
+		}
+
+		// Mobile zoom blockers
 		document.addEventListener('touchmove', e => {
 			if (e.scale !== 1) e.preventDefault();
 		}, { passive: false });
-
-		let lastTouchEnd = 0;
-		document.addEventListener('touchend', e => {
-			const now = Date.now();
-			if (now - lastTouchEnd <= 300) e.preventDefault();
-			lastTouchEnd = now;
-		}, false);
 
 		document.addEventListener('gesturestart', e => e.preventDefault());
 		document.addEventListener('gesturechange', e => e.preventDefault());
