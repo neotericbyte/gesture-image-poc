@@ -82,19 +82,31 @@ class GestureImage extends HTMLElement {
 		img.src = this.img.src;
 		await img.decode();
 
+		const rect = this.container.getBoundingClientRect();
+
 		const canvas = document.createElement("canvas");
 		const ctx = canvas.getContext("2d");
 
-		canvas.width = img.width;
-		canvas.height = img.height;
+		// ✅ canvas = visible frame
+		canvas.width = rect.width;
+		canvas.height = rect.height;
 
 		const finalScale = this.baseScale * this.userScale;
 
+		// move origin to center of frame
 		ctx.translate(canvas.width / 2, canvas.height / 2);
+
+		// apply SAME transform order
+		ctx.translate(this.x, this.y);
 		ctx.rotate(this.rotation * Math.PI / 180);
 		ctx.scale(finalScale, finalScale);
 
-		ctx.drawImage(img, -img.width / 2, -img.height / 2);
+		// draw image centered
+		ctx.drawImage(
+			img,
+			-img.width / 2,
+			-img.height / 2
+		);
 
 		return canvas.toDataURL("image/png");
 	}
