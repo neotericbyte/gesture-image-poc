@@ -21,6 +21,10 @@ class GestroImage extends HTMLElement {
           touch-action: none;
           position: relative;
           background: #000;
+
+          /* performance */
+          contain: layout paint size;
+          transform: translateZ(0);
         }
 
         img {
@@ -28,7 +32,13 @@ class GestroImage extends HTMLElement {
           top: 50%;
           left: 50%;
           transform-origin: center;
+
+          /* GPU acceleration */
           will-change: transform;
+          transform: translateZ(0);
+          backface-visibility: hidden;
+          -webkit-backface-visibility: hidden;
+
           max-width: none;
           max-height: none;
           user-select: none;
@@ -54,7 +64,10 @@ class GestroImage extends HTMLElement {
 		this.minScale = 0.2;
 		this.maxScale = 5;
 
-		// double tap state
+		// RAF batching
+		this._raf = null;
+
+		// double tap
 		this._lastTapTime = 0;
 		this._lastTapPos = null;
 		this._tapTimeout = 300;
@@ -78,7 +91,7 @@ class GestroImage extends HTMLElement {
 				this.x = this._rubberBand(this.x, maxX);
 				this.y = this._rubberBand(this.y, maxY);
 
-				this._update();
+				this._requestUpdate();
 			},
 
 			onPinchRotate: ({ scaleFactor, rotationDelta }) => {
@@ -88,18 +101,29 @@ class GestroImage extends HTMLElement {
 				this.rotation += rotationDelta;
 				this._normalizeRotation();
 
-				this._update();
+				this._requestUpdate();
 				this._emitTransform();
 			},
 
 			onEnd: (e) => {
-				// detect double tap only if no active pointers
 				if (this.gesture.pointers.size === 0) {
 					this._handleDoubleTap(e);
 				}
-
 				this._snapToBounds();
 			}
+		});
+	}
+
+	// =========================
+	// RAF BATCHING
+	// =========================
+
+	_requestUpdate() {
+		if (this._raf) return;
+
+		this._raf = requestAnimationFrame(() => {
+			this._raf = null;
+			this._update();
 		});
 	}
 
@@ -142,28 +166,28 @@ class GestroImage extends HTMLElement {
 	setZoom(scale) {
 		this.userScale = scale;
 		this._clampScale();
-		this._update();
+		this._requestUpdate();
 		this._emitTransform();
 	}
 
 	zoom(delta = 0.1) {
 		this.userScale += delta;
 		this._clampScale();
-		this._update();
+		this._requestUpdate();
 		this._emitTransform();
 	}
 
 	setRotation(deg) {
 		this.rotation = deg;
 		this._normalizeRotation();
-		this._update();
+		this._requestUpdate();
 		this._emitTransform();
 	}
 
 	rotate(delta = 10) {
 		this.rotation += delta;
 		this._normalizeRotation();
-		this._update();
+		this._requestUpdate();
 		this._emitTransform();
 	}
 
@@ -172,14 +196,14 @@ class GestroImage extends HTMLElement {
 		this.rotation = 0;
 		this.x = 0;
 		this.y = 0;
-		this._update();
+		this._requestUpdate();
 		this._emitTransform();
 	}
 
 	center() {
 		this.x = 0;
 		this.y = 0;
-		this._update();
+		this._requestUpdate();
 	}
 
 	// =========================
@@ -244,7 +268,7 @@ class GestroImage extends HTMLElement {
 		this.x = 0;
 		this.y = 0;
 
-		this._update();
+		this._requestUpdate();
 	}
 
 	// =========================
@@ -270,7 +294,6 @@ class GestroImage extends HTMLElement {
 		if (abs <= limit) return value;
 
 		const excess = abs - limit;
-
 		const resistance = 0.35;
 
 		const reduced = limit + excess * resistance;
@@ -321,8 +344,8 @@ class GestroImage extends HTMLElement {
 		const finalScale = this.baseScale * this.userScale;
 
 		this.img.style.transform = `
-      translate(-50%, -50%)
-      translate(${this.x}px, ${this.y}px)
+      translate3d(-50%, -50%, 0)
+      translate3d(${this.x}px, ${this.y}px, 0)
       rotate(${this.rotation}deg)
       scale(${finalScale})
     `;
