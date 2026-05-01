@@ -107,8 +107,8 @@ class GestroImage extends HTMLElement {
 
 				const { maxX, maxY } = this._getBounds();
 
-				this.x = this._rubberBand(this.x, maxX);
-				this.y = this._rubberBand(this.y, maxY);
+				this.x = this._softClamp(this.x, maxX);
+				this.y = this._softClamp(this.y, maxY);
 
 				this._requestUpdate();
 			},
@@ -375,10 +375,27 @@ class GestroImage extends HTMLElement {
 		const imgW = this.img.naturalWidth * finalScale;
 		const imgH = this.img.naturalHeight * finalScale;
 
-		const maxX = Math.max(0, (imgW - rect.width) / 2);
-		const maxY = Math.max(0, (imgH - rect.height) / 2);
+		const isSmallerThanContainer = imgW < rect.width || imgH < rect.height;
 
-		return { maxX, maxY };
+		// ✅ FREE PAN MODE
+		if (isSmallerThanContainer) {
+			// allow movement in both directions
+			const maxX = (rect.width - imgW) / 2;
+			const maxY = (rect.height - imgH) / 2;
+
+			return {
+				maxX: Math.abs(maxX),
+				maxY: Math.abs(maxY),
+				free: true
+			};
+		}
+
+		// ✅ NORMAL MODE
+		return {
+			maxX: (imgW - rect.width) / 2,
+			maxY: (imgH - rect.height) / 2,
+			free: false
+		};
 	}
 
 	_rubberBand(value, limit) {
@@ -466,6 +483,26 @@ class GestroImage extends HTMLElement {
 
 	_clampScale() {
 		this.userScale = Math.max(this.minScale, Math.min(this.userScale, this.maxScale));
+	}
+
+	_softClamp(value, limit) {
+		const abs = Math.abs(value);
+
+		// inside → no change
+		if (abs <= limit) return value;
+
+		// distance beyond edge
+		const excess = abs - limit;
+
+		// strong resistance curve (prevents escape)
+		const t = Math.min(1, excess / 120); // tuning factor
+
+		// easing (smooth resistance)
+		const resistance = 1 - Math.pow(1 - t, 3);
+
+		const adjusted = limit + excess * resistance * 0.2;
+
+		return value < 0 ? -adjusted : adjusted;
 	}
 
 	_normalizeRotation() {
