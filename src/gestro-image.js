@@ -13,38 +13,38 @@ class GestroImage extends HTMLElement {
 		this.shadowRoot.innerHTML = `
 		<style>
 			:host {
-			display: block;
-			width: 100%;
-			height: 100%;
+				display: block;
+				width: 100%;
+				height: 100%;
 			}
 
 			.container {
-			width: 100%;
-			height: 100%;
-			overflow: hidden;
-			touch-action: none;
-			position: relative;
-			background: #000;
+				width: 100%;
+				height: 100%;
+				overflow: hidden;
+				touch-action: none;
+				position: relative;
+				background: #000;
 
-			contain: layout paint size;
-			transform: translateZ(0);
+				contain: layout paint size;
+				transform: translateZ(0);
 			}
 
 			img {
-			position: absolute;
-			top: 50%;
-			left: 50%;
-			transform-origin: center;
+				position: absolute;
+				top: 50%;
+				left: 50%;
+				transform-origin: center;
 
-			will-change: transform;
-			transform: translateZ(0);
-			backface-visibility: hidden;
-			-webkit-backface-visibility: hidden;
+				will-change: transform;
+				transform: translateZ(0);
+				backface-visibility: hidden;
+				-webkit-backface-visibility: hidden;
 
-			max-width: none;
-			max-height: none;
-			user-select: none;
-			pointer-events: none;
+				max-width: none;
+				max-height: none;
+				user-select: none;
+				pointer-events: none;
 			}
 		</style>
 
@@ -66,7 +66,7 @@ class GestroImage extends HTMLElement {
 		this.minScale = 0.2;
 		this.maxScale = 5;
 
-		// RAF batching
+		// RAF
 		this._raf = null;
 
 		// double tap
@@ -75,12 +75,14 @@ class GestroImage extends HTMLElement {
 		this._tapTimeout = 300;
 		this._tapMoveThreshold = 10;
 
-		this._initGestures();
-	}
+		// ✅ history
+		this._history = [];
+		this._future = [];
+		this._maxHistory = 50;
 
-	// =========================
-	// LIFECYCLE
-	// =========================
+		this._initGestures();
+		this._initKeyboard();
+	}
 
 	connectedCallback() {
 		const src = this.getAttribute("src");
@@ -88,7 +90,7 @@ class GestroImage extends HTMLElement {
 	}
 
 	attributeChangedCallback(name, oldValue, newValue) {
-		if (name === "src" && newValue && newValue !== oldValue) {
+		if (name === "src" && newValue !== oldValue) {
 			this.setImage(newValue);
 		}
 	}
@@ -125,23 +127,90 @@ class GestroImage extends HTMLElement {
 			onEnd: (e) => {
 				if (this.gesture.pointers.size === 0) {
 					this._handleDoubleTap(e);
+					this._snapToBounds();
+
+					// ✅ push history after gesture completes
+					this._pushHistory();
 				}
-				this._snapToBounds();
+			}
+		});
+	}
+
+	_initKeyboard() {
+		window.addEventListener("keydown", (e) => {
+			if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+				e.preventDefault();
+				if (e.shiftKey) {
+					this.redo();
+				} else {
+					this.undo();
+				}
 			}
 		});
 	}
 
 	// =========================
-	// RAF
+	// HISTORY
 	// =========================
 
-	_requestUpdate() {
-		if (this._raf) return;
+	_getState() {
+		return {
+			x: this.x,
+			y: this.y,
+			scale: this.userScale,
+			rotation: this.rotation
+		};
+	}
 
-		this._raf = requestAnimationFrame(() => {
-			this._raf = null;
-			this._update();
-		});
+	_setState(state, silent = false) {
+		this.x = state.x;
+		this.y = state.y;
+		this.userScale = state.scale;
+		this.rotation = state.rotation;
+
+		this._requestUpdate();
+
+		if (!silent) this._emitTransform();
+	}
+
+	_pushHistory() {
+		const state = this._getState();
+		const last = this._history[this._history.length - 1];
+
+		if (
+			last &&
+			last.x === state.x &&
+			last.y === state.y &&
+			last.scale === state.scale &&
+			last.rotation === state.rotation
+		) return;
+
+		this._history.push(state);
+
+		if (this._history.length > this._maxHistory) {
+			this._history.shift();
+		}
+
+		this._future.length = 0;
+	}
+
+	undo() {
+		if (this._history.length <= 1) return;
+
+		const current = this._history.pop();
+		this._future.push(current);
+
+		const prev = this._history[this._history.length - 1];
+		this._setState(prev);
+	}
+
+	redo() {
+		if (!this._future.length) return;
+
+		const next = this._future.pop();
+		this._history.push(next);
+
+		this._setState(next);
 	}
 
 	// =========================
@@ -185,24 +254,7 @@ class GestroImage extends HTMLElement {
 		this._clampScale();
 		this._requestUpdate();
 		this._emitTransform();
-	}
-
-	scale(delta = 0.1) {
-		this.userScale += delta;
-		this._clampScale();
-		this._requestUpdate();
-		this._emitTransform();
-	}
-
-	// backward compatibility
-	setZoom(scale) {
-		console.warn("setZoom() is deprecated. Use setScale()");
-		this.setScale(scale);
-	}
-
-	zoom(delta = 0.1) {
-		console.warn("zoom() is deprecated. Use scale()");
-		this.scale(delta);
+		this._pushHistory();
 	}
 
 	setRotation(deg) {
@@ -210,13 +262,7 @@ class GestroImage extends HTMLElement {
 		this._normalizeRotation();
 		this._requestUpdate();
 		this._emitTransform();
-	}
-
-	rotate(delta = 10) {
-		this.rotation += delta;
-		this._normalizeRotation();
-		this._requestUpdate();
-		this._emitTransform();
+		this._pushHistory();
 	}
 
 	resetTransform() {
@@ -226,12 +272,14 @@ class GestroImage extends HTMLElement {
 		this.y = 0;
 		this._requestUpdate();
 		this._emitTransform();
+		this._pushHistory();
 	}
 
 	center() {
 		this.x = 0;
 		this.y = 0;
 		this._requestUpdate();
+		this._pushHistory();
 	}
 
 	// =========================
@@ -254,37 +302,6 @@ class GestroImage extends HTMLElement {
 		temp.src = src;
 	}
 
-	async exportImage() {
-		const img = new Image();
-		img.src = this.img.src;
-		await img.decode();
-
-		const rect = this.container.getBoundingClientRect();
-		const finalScale = this.baseScale * this.userScale;
-
-		const displayedWidth = img.width * finalScale;
-		const displayedHeight = img.height * finalScale;
-
-		const ratioX = img.width / displayedWidth;
-		const ratioY = img.height / displayedHeight;
-
-		const canvas = document.createElement("canvas");
-		const ctx = canvas.getContext("2d");
-
-		canvas.width = rect.width * ratioX;
-		canvas.height = rect.height * ratioY;
-
-		ctx.translate(canvas.width / 2, canvas.height / 2);
-
-		ctx.translate(this.x * ratioX, this.y * ratioY);
-		ctx.rotate(this.rotation * Math.PI / 180);
-		ctx.scale(finalScale * ratioX, finalScale * ratioY);
-
-		ctx.drawImage(img, -img.width / 2, -img.height / 2);
-
-		return canvas.toDataURL("image/png");
-	}
-
 	_applyCoverScale(imgW, imgH) {
 		const rect = this.container.getBoundingClientRect();
 
@@ -299,6 +316,11 @@ class GestroImage extends HTMLElement {
 		this.y = 0;
 
 		this._requestUpdate();
+
+		// ✅ reset history
+		this._history = [];
+		this._future = [];
+		this._pushHistory();
 	}
 
 	// =========================
@@ -330,7 +352,7 @@ class GestroImage extends HTMLElement {
 	}
 
 	// =========================
-	// SNAP BACK
+	// SNAP
 	// =========================
 
 	_snapToBounds() {
@@ -368,15 +390,24 @@ class GestroImage extends HTMLElement {
 	// RENDER
 	// =========================
 
+	_requestUpdate() {
+		if (this._raf) return;
+
+		this._raf = requestAnimationFrame(() => {
+			this._raf = null;
+			this._update();
+		});
+	}
+
 	_update() {
 		const finalScale = this.baseScale * this.userScale;
 
 		this.img.style.transform = `
-      translate3d(-50%, -50%, 0)
-      translate3d(${this.x}px, ${this.y}px, 0)
-      rotate(${this.rotation}deg)
-      scale(${finalScale})
-    `;
+			translate3d(-50%, -50%, 0)
+			translate3d(${this.x}px, ${this.y}px, 0)
+			rotate(${this.rotation}deg)
+			scale(${finalScale})
+		`;
 	}
 
 	_emitTransform() {

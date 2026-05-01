@@ -42,10 +42,6 @@
 			overflow: hidden;
 		}
 
-		/* =========================
-		   CONTROLS PANEL
-		========================= */
-
 		.controls {
 			padding: 14px;
 			display: flex;
@@ -78,6 +74,11 @@
 			background: #333;
 		}
 
+		button:disabled {
+			opacity: 0.4;
+			cursor: not-allowed;
+		}
+
 		.primary {
 			background: #4caf50;
 		}
@@ -98,10 +99,6 @@
 			display: none;
 		}
 
-		/* =========================
-		   SLIDER CARD
-		========================= */
-
 		.control-group {
 			display: flex;
 			flex-direction: column;
@@ -118,67 +115,11 @@
 			font-size: 13px;
 		}
 
-		.label span:first-child {
-			color: #ddd;
-			font-weight: 500;
-		}
-
-		.label span:last-child {
-			color: #4caf50;
-			font-variant-numeric: tabular-nums;
-		}
-
-		/* =========================
-		   MODERN SLIDER
-		========================= */
-
 		input[type="range"] {
-			-webkit-appearance: none;
 			width: 100%;
 			height: 4px;
 			border-radius: 999px;
-			outline: none;
-			background: linear-gradient(
-				to right,
-				#4caf50 var(--progress, 50%),
-				#2b2b2b var(--progress, 50%)
-			);
-			transition: background 0.2s ease;
-		}
-
-		input[type="range"]::-webkit-slider-thumb {
-			-webkit-appearance: none;
-			width: 14px;
-			height: 14px;
-			border-radius: 50%;
-			background: #fff;
-			cursor: pointer;
-			border: 2px solid #4caf50;
-			transition: transform 0.15s ease, box-shadow 0.15s ease;
-		}
-
-		input[type="range"]:hover::-webkit-slider-thumb {
-			transform: scale(1.1);
-		}
-
-		input[type="range"]:active::-webkit-slider-thumb {
-			transform: scale(1.2);
-			box-shadow: 0 0 0 6px rgba(76, 175, 80, 0.15);
-		}
-
-		input[type="range"]::-moz-range-thumb {
-			width: 14px;
-			height: 14px;
-			border-radius: 50%;
-			background: #fff;
-			border: 2px solid #4caf50;
-			cursor: pointer;
-		}
-
-		input[type="range"]::-moz-range-track {
-			height: 4px;
-			border-radius: 999px;
-			background: transparent;
+			background: linear-gradient(to right, #4caf50 var(--progress, 50%), #2b2b2b var(--progress, 50%));
 		}
 	</style>
 
@@ -189,22 +130,22 @@
 
 			const editor = document.getElementById("editor");
 			const fileInput = document.getElementById("fileInput");
+
 			const zoomSlider = document.getElementById("zoomSlider");
 			const rotateSlider = document.getElementById("rotateSlider");
 
 			const zoomValue = document.getElementById("zoomValue");
 			const rotateValue = document.getElementById("rotateValue");
 
-			// slider progress fill
-			const updateSliderProgress = (slider) => {
-				const min = slider.min || 0;
-				const max = slider.max || 100;
-				const val = slider.value;
+			const undoBtn = document.getElementById("undoBtn");
+			const redoBtn = document.getElementById("redoBtn");
 
-				const percent = ((val - min) / (max - min)) * 100;
+			const updateSliderProgress = (slider) => {
+				const percent = ((slider.value - slider.min) / (slider.max - slider.min)) * 100;
 				slider.style.setProperty("--progress", percent + "%");
 			};
 
+			// INIT IMAGE
 			const init = () => {
 				if (!editor || typeof editor.setImage !== "function") {
 					requestAnimationFrame(init);
@@ -212,9 +153,9 @@
 				}
 				editor.setImage("https://picsum.photos/800/1200");
 			};
-
 			init();
 
+			// UPLOAD
 			fileInput.onchange = e => {
 				const file = e.target.files[0];
 				if (!file) return;
@@ -226,18 +167,10 @@
 				fileInput.value = "";
 			};
 
-			window.reset = () => {
-				editor.resetTransform();
-				zoomSlider.value = 1;
-				rotateSlider.value = 0;
+			// RESET
+			window.reset = () => editor.resetTransform();
 
-				updateSliderProgress(zoomSlider);
-				updateSliderProgress(rotateSlider);
-
-				zoomValue.textContent = "1.00x";
-				rotateValue.textContent = "0°";
-			};
-
+			// EXPORT
 			window.exportImage = async () => {
 				const data = await editor.exportImage();
 				const a = document.createElement("a");
@@ -246,24 +179,47 @@
 				a.click();
 			};
 
+			// SLIDERS
 			zoomSlider.oninput = () => {
-				const val = parseFloat(zoomSlider.value);
-				editor.setScale(val);
-				zoomValue.textContent = val.toFixed(2) + "x";
-				updateSliderProgress(zoomSlider);
+				editor.setScale(parseFloat(zoomSlider.value));
 			};
 
 			rotateSlider.oninput = () => {
-				const val = parseFloat(rotateSlider.value);
-				editor.setRotation(val);
-				rotateValue.textContent = val + "°";
-				updateSliderProgress(rotateSlider);
+				editor.setRotation(parseFloat(rotateSlider.value));
 			};
 
-			// initialize progress
+			// UNDO / REDO
+			undoBtn.onclick = () => editor.undo();
+			redoBtn.onclick = () => editor.redo();
+
+			// KEYBOARD SUPPORT
+			window.addEventListener("keydown", (e) => {
+				if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+					e.preventDefault();
+					e.shiftKey ? editor.redo() : editor.undo();
+				}
+			});
+
+			// SYNC UI WITH STATE
+			editor.addEventListener("transform", (e) => {
+				const { scale, rotation } = e.detail;
+
+				zoomSlider.value = scale;
+				rotateSlider.value = rotation;
+
+				zoomValue.textContent = scale.toFixed(2) + "x";
+				rotateValue.textContent = rotation + "°";
+
+				updateSliderProgress(zoomSlider);
+				updateSliderProgress(rotateSlider);
+
+				// enable / disable buttons
+				undoBtn.disabled = editor._history.length <= 1;
+				redoBtn.disabled = editor._future.length === 0;
+			});
+
 			updateSliderProgress(zoomSlider);
 			updateSliderProgress(rotateSlider);
-
 		});
 	</script>
 
@@ -287,6 +243,12 @@
 
 				<button onclick="reset()">🔄 Reset</button>
 				<button class="primary" onclick="exportImage()">⬇️ Export</button>
+			</div>
+
+			<!-- ✅ UNDO / REDO -->
+			<div class="row">
+				<button id="undoBtn">↩️ Undo</button>
+				<button id="redoBtn">↪️ Redo</button>
 			</div>
 
 			<div class="control-group">
