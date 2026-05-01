@@ -282,6 +282,47 @@ class GestroImage extends HTMLElement {
 		this._pushHistory();
 	}
 
+	async exportImage() {
+		const img = new Image();
+		img.src = this.img.src;
+		await img.decode();
+
+		const rect = this.container.getBoundingClientRect();
+
+		const finalScale = this.baseScale * this.userScale;
+
+		// 👇 how much the image is scaled on screen
+		const displayedWidth = img.width * finalScale;
+		const displayedHeight = img.height * finalScale;
+
+		// 👇 ratio from screen → original pixels
+		const ratioX = img.width / displayedWidth;
+		const ratioY = img.height / displayedHeight;
+
+		// 👇 export canvas in ORIGINAL quality
+		const canvas = document.createElement("canvas");
+		const ctx = canvas.getContext("2d");
+
+		canvas.width = rect.width * ratioX;
+		canvas.height = rect.height * ratioY;
+
+		// move to center
+		ctx.translate(canvas.width / 2, canvas.height / 2);
+
+		// apply same transform BUT scaled to original resolution
+		ctx.translate(this.x * ratioX, this.y * ratioY);
+		ctx.rotate(this.rotation * Math.PI / 180);
+		ctx.scale(finalScale * ratioX, finalScale * ratioY);
+
+		ctx.drawImage(
+			img,
+			-img.width / 2,
+			-img.height / 2
+		);
+
+		return canvas.toDataURL("image/png");
+	}
+
 	// =========================
 	// IMAGE
 	// =========================
