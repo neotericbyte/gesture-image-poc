@@ -9,8 +9,54 @@ class GestroImage extends HTMLElement {
 		super();
 
 		this.attachShadow({ mode: "open" });
+		this.shadowRoot.innerHTML = this._template();
 
-		this.shadowRoot.innerHTML = `
+		// DOM
+		this.container = this.shadowRoot.querySelector(".container");
+		this.img = this.shadowRoot.querySelector("img");
+
+		// =========================
+		// STATE
+		// =========================
+		this._state = {
+			baseScale: 1,
+			userScale: 1,
+			rotation: 0,
+			x: 0,
+			y: 0
+		};
+
+		this._config = {
+			minScale: 0.2,
+			maxScale: 5,
+			maxHistory: 50
+		};
+
+		// history
+		this._history = [];
+		this._future = [];
+
+		// render
+		this._raf = null;
+
+		// gesture helpers
+		this._tap = {
+			lastTime: 0,
+			lastPos: null,
+			timeout: 300,
+			threshold: 10
+		};
+
+		this._initGestures();
+		this._initKeyboard();
+	}
+
+	// =========================
+	// TEMPLATE
+	// =========================
+
+	_template() {
+		return `
 		<style>
 			:host {
 				display: block;
@@ -25,7 +71,6 @@ class GestroImage extends HTMLElement {
 				touch-action: none;
 				position: relative;
 				background: #000;
-
 				contain: layout paint size;
 				transform: translateZ(0);
 			}
@@ -35,12 +80,10 @@ class GestroImage extends HTMLElement {
 				top: 50%;
 				left: 50%;
 				transform-origin: center;
-
 				will-change: transform;
 				transform: translateZ(0);
 				backface-visibility: hidden;
 				-webkit-backface-visibility: hidden;
-
 				max-width: none;
 				max-height: none;
 				user-select: none;
@@ -50,39 +93,12 @@ class GestroImage extends HTMLElement {
 
 		<div class="container">
 			<img />
-		</div>
-		`;
-
-		this.container = this.shadowRoot.querySelector(".container");
-		this.img = this.shadowRoot.querySelector("img");
-
-		// transform state
-		this.baseScale = 1;
-		this.userScale = 1;
-		this.rotation = 0;
-		this.x = 0;
-		this.y = 0;
-
-		this.minScale = 0.2;
-		this.maxScale = 5;
-
-		// RAF
-		this._raf = null;
-
-		// double tap
-		this._lastTapTime = 0;
-		this._lastTapPos = null;
-		this._tapTimeout = 300;
-		this._tapMoveThreshold = 10;
-
-		// ✅ history
-		this._history = [];
-		this._future = [];
-		this._maxHistory = 50;
-
-		this._initGestures();
-		this._initKeyboard();
+		</div>`;
 	}
+
+	// =========================
+	// LIFECYCLE
+	// =========================
 
 	connectedCallback() {
 		const src = this.getAttribute("src");
@@ -102,25 +118,21 @@ class GestroImage extends HTMLElement {
 	_initGestures() {
 		this.gesture = new GestroEngine(this.container, {
 			onPan: ({ dx, dy }) => {
-				this.x += dx;
-				this.y += dy;
+				this._state.x += dx;
+				this._state.y += dy;
 
-				const { maxX, maxY } = this._getBounds();
-
-				this.x = this._softClamp(this.x, maxX);
-				this.y = this._softClamp(this.y, maxY);
-
-				this._requestUpdate();
+				this._applyBounds();
+				this._requestRender();
 			},
 
 			onPinchRotate: ({ scaleFactor, rotationDelta }) => {
-				this.userScale *= scaleFactor;
+				this._state.userScale *= scaleFactor;
 				this._clampScale();
 
-				this.rotation += rotationDelta;
+				this._state.rotation += rotationDelta;
 				this._normalizeRotation();
 
-				this._requestUpdate();
+				this._requestRender();
 				this._emitTransform();
 			},
 
@@ -128,8 +140,6 @@ class GestroImage extends HTMLElement {
 				if (this.gesture.pointers.size === 0) {
 					this._handleDoubleTap(e);
 					this._snapToBounds();
-
-					// ✅ push history after gesture completes
 					this._pushHistory();
 				}
 			}
@@ -138,70 +148,61 @@ class GestroImage extends HTMLElement {
 
 	_initKeyboard() {
 		window.addEventListener("keydown", (e) => {
-			if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
-				e.preventDefault();
-				if (e.shiftKey) {
-					this.redo();
-				} else {
-					this.undo();
-				}
-			}
+			if (!(e.ctrlKey || e.metaKey)) return;
+
+			if (e.key.toLowerCase() !== "z") return;
+
+			e.preventDefault();
+			e.shiftKey ? this.redo() : this.undo();
 		});
+	}
+
+	// =========================
+	// STATE HELPERS
+	// =========================
+
+	_getState() {
+		return { ...this._state };
+	}
+
+	_setState(silent = false, state) {
+		Object.assign(this._state, state);
+		this._requestRender();
+		if (!silent) this._emitTransform();
 	}
 
 	// =========================
 	// HISTORY
 	// =========================
 
-	_getState() {
-		return {
-			x: this.x,
-			y: this.y,
-			scale: this.userScale,
-			rotation: this.rotation
-		};
-	}
-
-	_setState(state, silent = false) {
-		this.x = state.x;
-		this.y = state.y;
-		this.userScale = state.scale;
-		this.rotation = state.rotation;
-
-		this._requestUpdate();
-
-		if (!silent) this._emitTransform();
-	}
-
 	_pushHistory() {
-		const state = this._getState();
-		const last = this._history[this._history.length - 1];
+		const s = this._getState();
+		const last = this._history.at(-1);
 
-		if (
-			last &&
-			last.x === state.x &&
-			last.y === state.y &&
-			last.scale === state.scale &&
-			last.rotation === state.rotation
-		) return;
+		if (last && this._isSameState(last, s)) return;
 
-		this._history.push(state);
-
-		if (this._history.length > this._maxHistory) {
+		this._history.push(s);
+		if (this._history.length > this._config.maxHistory) {
 			this._history.shift();
 		}
 
 		this._future.length = 0;
 	}
 
+	_isSameState(a, b) {
+		return (
+			a.x === b.x &&
+			a.y === b.y &&
+			a.userScale === b.userScale &&
+			a.rotation === b.rotation
+		);
+	}
+
 	undo() {
 		if (this._history.length <= 1) return;
 
-		const current = this._history.pop();
-		this._future.push(current);
-
-		const prev = this._history[this._history.length - 1];
-		this._setState(prev);
+		this._future.push(this._history.pop());
+		this._setState(false, this._history.at(-1));
 	}
 
 	redo() {
@@ -209,8 +210,7 @@ class GestroImage extends HTMLElement {
 
 		const next = this._future.pop();
 		this._history.push(next);
-
-		this._setState(next);
+		this._setState(false, next);
 	}
 
 	// =========================
@@ -219,30 +219,21 @@ class GestroImage extends HTMLElement {
 
 	_handleDoubleTap(e) {
 		const now = performance.now();
-		const x = e.clientX;
-		const y = e.clientY;
+		const { lastTime, lastPos, timeout, threshold } = this._tap;
 
-		let isDoubleTap = false;
+		let isDouble = false;
 
-		if (this._lastTapTime) {
-			const dt = now - this._lastTapTime;
+		if (lastTime && lastPos) {
+			const dt = now - lastTime;
+			const dist = Math.hypot(e.clientX - lastPos.x, e.clientY - lastPos.y);
 
-			if (dt < this._tapTimeout && this._lastTapPos) {
-				const dx = x - this._lastTapPos.x;
-				const dy = y - this._lastTapPos.y;
-
-				if (Math.hypot(dx, dy) < this._tapMoveThreshold) {
-					isDoubleTap = true;
-				}
-			}
+			isDouble = dt < timeout && dist < threshold;
 		}
 
-		this._lastTapTime = now;
-		this._lastTapPos = { x, y };
+		this._tap.lastTime = now;
+		this._tap.lastPos = { x: e.clientX, y: e.clientY };
 
-		if (isDoubleTap) {
-			this.resetTransform();
-		}
+		if (isDouble) this.resetTransform();
 	}
 
 	// =========================
@@ -250,77 +241,39 @@ class GestroImage extends HTMLElement {
 	// =========================
 
 	setScale(scale) {
-		this.userScale = scale;
+		this._state.userScale = scale;
 		this._clampScale();
-		this._requestUpdate();
+		this._requestRender();
 		this._emitTransform();
 		this._pushHistory();
 	}
 
 	setRotation(deg) {
-		this.rotation = deg;
+		this._state.rotation = deg;
 		this._normalizeRotation();
-		this._requestUpdate();
+		this._requestRender();
 		this._emitTransform();
 		this._pushHistory();
 	}
 
 	resetTransform() {
-		this.userScale = 1;
-		this.rotation = 0;
-		this.x = 0;
-		this.y = 0;
-		this._requestUpdate();
+		Object.assign(this._state, {
+			userScale: 1,
+			rotation: 0,
+			x: 0,
+			y: 0
+		});
+
+		this._requestRender();
 		this._emitTransform();
 		this._pushHistory();
 	}
 
 	center() {
-		this.x = 0;
-		this.y = 0;
-		this._requestUpdate();
+		this._state.x = 0;
+		this._state.y = 0;
+		this._requestRender();
 		this._pushHistory();
-	}
-
-	async exportImage() {
-		const img = new Image();
-		img.src = this.img.src;
-		await img.decode();
-
-		const rect = this.container.getBoundingClientRect();
-
-		const finalScale = this.baseScale * this.userScale;
-
-		// 👇 how much the image is scaled on screen
-		const displayedWidth = img.width * finalScale;
-		const displayedHeight = img.height * finalScale;
-
-		// 👇 ratio from screen → original pixels
-		const ratioX = img.width / displayedWidth;
-		const ratioY = img.height / displayedHeight;
-
-		// 👇 export canvas in ORIGINAL quality
-		const canvas = document.createElement("canvas");
-		const ctx = canvas.getContext("2d");
-
-		canvas.width = rect.width * ratioX;
-		canvas.height = rect.height * ratioY;
-
-		// move to center
-		ctx.translate(canvas.width / 2, canvas.height / 2);
-
-		// apply same transform BUT scaled to original resolution
-		ctx.translate(this.x * ratioX, this.y * ratioY);
-		ctx.rotate(this.rotation * Math.PI / 180);
-		ctx.scale(finalScale * ratioX, finalScale * ratioY);
-
-		ctx.drawImage(
-			img,
-			-img.width / 2,
-			-img.height / 2
-		);
-
-		return canvas.toDataURL("image/png");
 	}
 
 	// =========================
@@ -331,36 +284,34 @@ class GestroImage extends HTMLElement {
 		if (this.img.src === src) return;
 
 		const temp = new Image();
-
 		temp.onload = () => {
 			this.img.src = src;
 
 			requestAnimationFrame(() => {
-				this._applyCoverScale(temp.width, temp.height);
+				this._applyCover(temp.width, temp.height);
 			});
 		};
 
 		temp.src = src;
 	}
 
-	_applyCoverScale(imgW, imgH) {
+	_applyCover(w, h) {
 		const rect = this.container.getBoundingClientRect();
 
-		const scaleX = rect.width / imgW;
-		const scaleY = rect.height / imgH;
+		const sx = rect.width / w;
+		const sy = rect.height / h;
 
-		this.baseScale = Math.max(scaleX, scaleY);
+		this._state.baseScale = Math.max(sx, sy);
 
-		this.userScale = 1;
-		this.rotation = 0;
-		this.x = 0;
-		this.y = 0;
+		this._state.userScale = 1;
+		this._state.rotation = 0;
+		this._state.x = 0;
+		this._state.y = 0;
 
-		this._requestUpdate();
-
-		// ✅ reset history
 		this._history = [];
 		this._future = [];
+
+		this._requestRender();
 		this._pushHistory();
 	}
 
@@ -368,45 +319,98 @@ class GestroImage extends HTMLElement {
 	// BOUNDS
 	// =========================
 
+	_applyBounds() {
+		const { maxX, maxY } = this._getBounds();
+
+		this._state.x = this._softClamp(this._state.x, maxX);
+		this._state.y = this._softClamp(this._state.y, maxY);
+	}
+
 	_getBounds() {
 		const rect = this.container.getBoundingClientRect();
-		const finalScale = this.baseScale * this.userScale;
+		const s = this._state.baseScale * this._state.userScale;
 
-		const imgW = this.img.naturalWidth * finalScale;
-		const imgH = this.img.naturalHeight * finalScale;
+		const w = this.img.naturalWidth * s;
+		const h = this.img.naturalHeight * s;
 
-		const isSmallerThanContainer = imgW < rect.width || imgH < rect.height;
-
-		// ✅ FREE PAN MODE
-		if (isSmallerThanContainer) {
-			// allow movement in both directions
-			const maxX = (rect.width - imgW) / 2;
-			const maxY = (rect.height - imgH) / 2;
-
+		if (w < rect.width || h < rect.height) {
 			return {
-				maxX: Math.abs(maxX),
-				maxY: Math.abs(maxY),
-				free: true
+				maxX: Math.abs((rect.width - w) / 2),
+				maxY: Math.abs((rect.height - h) / 2)
 			};
 		}
 
-		// ✅ NORMAL MODE
 		return {
-			maxX: (imgW - rect.width) / 2,
-			maxY: (imgH - rect.height) / 2,
-			free: false
+			maxX: (w - rect.width) / 2,
+			maxY: (h - rect.height) / 2
 		};
 	}
 
-	_rubberBand(value, limit) {
-		const abs = Math.abs(value);
-		if (abs <= limit) return value;
+	_softClamp(v, limit) {
+		const a = Math.abs(v);
+		if (a <= limit) return v;
 
-		const excess = abs - limit;
-		const resistance = 0.35;
+		const excess = a - limit;
+		const t = Math.min(1, excess / 120);
 
-		const reduced = limit + excess * resistance;
-		return value < 0 ? -reduced : reduced;
+		const r = 1 - Math.pow(1 - t, 3);
+
+		const out = limit + excess * r * 0.2;
+		return v < 0 ? -out : out;
+	}
+
+	// =========================
+	// RENDER
+	// =========================
+
+	_requestRender() {
+		if (this._raf) return;
+
+		this._raf = requestAnimationFrame(() => {
+			this._raf = null;
+			this._render();
+		});
+	}
+
+	_render() {
+		const s = this._state.baseScale * this._state.userScale;
+
+		this.img.style.transform = `
+			translate3d(-50%, -50%, 0)
+			translate3d(${this._state.x}px, ${this._state.y}px, 0)
+			rotate(${this._state.rotation}deg)
+			scale(${s})
+		`;
+	}
+
+	_emitTransform() {
+		this.dispatchEvent(
+			new CustomEvent("transform", {
+				detail: {
+					scale: this._state.userScale,   // ✅ restore expected API
+					rotation: this._state.rotation,
+					x: this._state.x,
+					y: this._state.y
+				}
+			})
+		);
+	}
+
+	// =========================
+	// UTIL
+	// =========================
+
+	_clampScale() {
+		const { minScale, maxScale } = this._config;
+
+		this._state.userScale = Math.max(
+			minScale,
+			Math.min(maxScale, this._state.userScale)
+		);
+	}
+
+	_normalizeRotation() {
+		this._state.rotation %= 360;
 	}
 
 	// =========================
@@ -416,97 +420,67 @@ class GestroImage extends HTMLElement {
 	_snapToBounds() {
 		const { maxX, maxY } = this._getBounds();
 
-		const clamp = (v, max) => Math.max(-max, Math.min(v, max));
+		const clamp = (v, m) => Math.max(-m, Math.min(v, m));
 
-		const targetX = clamp(this.x, maxX);
-		const targetY = clamp(this.y, maxY);
+		const tx = clamp(this._state.x, maxX);
+		const ty = clamp(this._state.y, maxY);
 
-		if (targetX === this.x && targetY === this.y) return;
+		if (tx === this._state.x && ty === this._state.y) return;
 
-		const startX = this.x;
-		const startY = this.y;
+		const sx = this._state.x;
+		const sy = this._state.y;
 
+		const start = performance.now();
 		const duration = 300;
-		const startTime = performance.now();
 
-		const animate = (now) => {
-			const t = Math.min(1, (now - startTime) / duration);
-			const ease = 1 - Math.pow(1 - t, 3);
+		const anim = (t) => {
+			const p = Math.min(1, (t - start) / duration);
+			const e = 1 - Math.pow(1 - p, 3);
 
-			this.x = startX + (targetX - startX) * ease;
-			this.y = startY + (targetY - startY) * ease;
+			this._state.x = sx + (tx - sx) * e;
+			this._state.y = sy + (ty - sy) * e;
 
-			this._update();
+			this._render();
 
-			if (t < 1) requestAnimationFrame(animate);
+			if (p < 1) requestAnimationFrame(anim);
 		};
 
-		requestAnimationFrame(animate);
+		requestAnimationFrame(anim);
 	}
 
 	// =========================
-	// RENDER
+	// EXPORT
 	// =========================
 
-	_requestUpdate() {
-		if (this._raf) return;
+	async exportImage() {
+		const img = new Image();
+		img.src = this.img.src;
+		await img.decode();
 
-		this._raf = requestAnimationFrame(() => {
-			this._raf = null;
-			this._update();
-		});
-	}
+		const rect = this.container.getBoundingClientRect();
 
-	_update() {
-		const finalScale = this.baseScale * this.userScale;
+		const final = this._state.baseScale * this._state.userScale;
 
-		this.img.style.transform = `
-			translate3d(-50%, -50%, 0)
-			translate3d(${this.x}px, ${this.y}px, 0)
-			rotate(${this.rotation}deg)
-			scale(${finalScale})
-		`;
-	}
+		const dw = img.width * final;
+		const dh = img.height * final;
 
-	_emitTransform() {
-		this.dispatchEvent(
-			new CustomEvent("transform", {
-				detail: {
-					scale: this.userScale,
-					rotation: this.rotation,
-					x: this.x,
-					y: this.y
-				}
-			})
-		);
-	}
+		const rx = img.width / dw;
+		const ry = img.height / dh;
 
-	_clampScale() {
-		this.userScale = Math.max(this.minScale, Math.min(this.userScale, this.maxScale));
-	}
+		const canvas = document.createElement("canvas");
+		const ctx = canvas.getContext("2d");
 
-	_softClamp(value, limit) {
-		const abs = Math.abs(value);
+		canvas.width = rect.width * rx;
+		canvas.height = rect.height * ry;
 
-		// inside → no change
-		if (abs <= limit) return value;
+		ctx.translate(canvas.width / 2, canvas.height / 2);
+		ctx.translate(this._state.x * rx, this._state.y * ry);
+		ctx.rotate((this._state.rotation * Math.PI) / 180);
+		ctx.scale(final * rx, final * ry);
 
-		// distance beyond edge
-		const excess = abs - limit;
+		ctx.drawImage(img, -img.width / 2, -img.height / 2);
 
-		// strong resistance curve (prevents escape)
-		const t = Math.min(1, excess / 120); // tuning factor
-
-		// easing (smooth resistance)
-		const resistance = 1 - Math.pow(1 - t, 3);
-
-		const adjusted = limit + excess * resistance * 0.2;
-
-		return value < 0 ? -adjusted : adjusted;
-	}
-
-	_normalizeRotation() {
-		this.rotation = this.rotation % 360;
+		return canvas.toDataURL("image/png");
 	}
 }
 
