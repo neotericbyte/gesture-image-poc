@@ -1,55 +1,57 @@
 import GestroEngine from "./gestro-engine.js";
 
 class GestroImage extends HTMLElement {
+	static get observedAttributes() {
+		return ["src"];
+	}
+
 	constructor() {
 		super();
 
 		this.attachShadow({ mode: "open" });
 
 		this.shadowRoot.innerHTML = `
-      <style>
-        :host {
-          display: block;
-          width: 100%;
-          height: 100%;
-        }
+		<style>
+			:host {
+			display: block;
+			width: 100%;
+			height: 100%;
+			}
 
-        .container {
-          width: 100%;
-          height: 100%;
-          overflow: hidden;
-          touch-action: none;
-          position: relative;
-          background: #000;
+			.container {
+			width: 100%;
+			height: 100%;
+			overflow: hidden;
+			touch-action: none;
+			position: relative;
+			background: #000;
 
-          /* performance */
-          contain: layout paint size;
-          transform: translateZ(0);
-        }
+			contain: layout paint size;
+			transform: translateZ(0);
+			}
 
-        img {
-          position: absolute;
-          top: 50%;
-          left: 50%;
-          transform-origin: center;
+			img {
+			position: absolute;
+			top: 50%;
+			left: 50%;
+			transform-origin: center;
 
-          /* GPU acceleration */
-          will-change: transform;
-          transform: translateZ(0);
-          backface-visibility: hidden;
-          -webkit-backface-visibility: hidden;
+			will-change: transform;
+			transform: translateZ(0);
+			backface-visibility: hidden;
+			-webkit-backface-visibility: hidden;
 
-          max-width: none;
-          max-height: none;
-          user-select: none;
-          pointer-events: none;
-        }
-      </style>
+			max-width: none;
+			max-height: none;
+			user-select: none;
+			pointer-events: none;
+			}
+		</style>
 
-      <div class="container">
-        <img />
-      </div>
-    `;
+		<div class="container">
+			<img />
+		</div>
+		`;
 
 		this.container = this.shadowRoot.querySelector(".container");
 		this.img = this.shadowRoot.querySelector("img");
@@ -74,6 +76,21 @@ class GestroImage extends HTMLElement {
 		this._tapMoveThreshold = 10;
 
 		this._initGestures();
+	}
+
+	// =========================
+	// LIFECYCLE
+	// =========================
+
+	connectedCallback() {
+		const src = this.getAttribute("src");
+		if (src) this.setImage(src);
+	}
+
+	attributeChangedCallback(name, oldValue, newValue) {
+		if (name === "src" && newValue && newValue !== oldValue) {
+			this.setImage(newValue);
+		}
 	}
 
 	// =========================
@@ -115,7 +132,7 @@ class GestroImage extends HTMLElement {
 	}
 
 	// =========================
-	// RAF BATCHING
+	// RAF
 	// =========================
 
 	_requestUpdate() {
@@ -177,6 +194,17 @@ class GestroImage extends HTMLElement {
 		this._emitTransform();
 	}
 
+	// backward compatibility
+	setZoom(scale) {
+		console.warn("setZoom() is deprecated. Use setScale()");
+		this.setScale(scale);
+	}
+
+	zoom(delta = 0.1) {
+		console.warn("zoom() is deprecated. Use scale()");
+		this.scale(delta);
+	}
+
 	setRotation(deg) {
 		this.rotation = deg;
 		this._normalizeRotation();
@@ -211,6 +239,8 @@ class GestroImage extends HTMLElement {
 	// =========================
 
 	setImage(src) {
+		if (this.img.src === src) return;
+
 		const temp = new Image();
 
 		temp.onload = () => {
@@ -272,7 +302,7 @@ class GestroImage extends HTMLElement {
 	}
 
 	// =========================
-	// BOUNDS + RUBBER BAND
+	// BOUNDS
 	// =========================
 
 	_getBounds() {
@@ -290,14 +320,12 @@ class GestroImage extends HTMLElement {
 
 	_rubberBand(value, limit) {
 		const abs = Math.abs(value);
-
 		if (abs <= limit) return value;
 
 		const excess = abs - limit;
 		const resistance = 0.35;
 
 		const reduced = limit + excess * resistance;
-
 		return value < 0 ? -reduced : reduced;
 	}
 
@@ -337,7 +365,7 @@ class GestroImage extends HTMLElement {
 	}
 
 	// =========================
-	// INTERNAL
+	// RENDER
 	// =========================
 
 	_update() {
