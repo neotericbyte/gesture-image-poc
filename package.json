@@ -11,6 +11,11 @@
       "require": "./dist/gestro.umd.js"
     }
   },
+  "scripts": {
+    "build:js": "esbuild src/gestro-image.js --bundle --format=esm --outfile=dist/gestro-image.esm.js",
+    "build:example": "node scripts/build-example.mjs",
+    "build": "npm run build:js && npm run build:example"
+  },
   "types": "./types/index.d.ts",
   "files": [
     "dist",
