@@ -220,16 +220,6 @@
 				slider.style.setProperty("--progress", percent + "%");
 			};
 
-			const updateHistoryButtons = () => {
-				if (!selectedEditor) {
-					undoBtn.disabled = true;
-					redoBtn.disabled = true;
-					return;
-				}
-				undoBtn.disabled = selectedEditor._history.length <= 1;
-				redoBtn.disabled = selectedEditor._future.length === 0;
-			};
-
 			const applyUIFromState = (editor) => {
 				const s = state.get(editor) || { scale: 1, rotation: 0 };
 				zoomSlider.value = s.scale;
@@ -238,7 +228,6 @@
 				rotateValue.textContent = s.rotation + "°";
 				updateSliderProgress(zoomSlider);
 				updateSliderProgress(rotateSlider);
-				updateHistoryButtons();
 			};
 
 			const selectEditor = (editor, label) => {
@@ -298,18 +287,7 @@
 				selectedEditor.setRotation(parseFloat(rotateSlider.value));
 			};
 
-			undoBtn.onclick = () => selectedEditor && selectedEditor.undo();
-			redoBtn.onclick = () => selectedEditor && selectedEditor.redo();
 			resetBtn.onclick = () => selectedEditor && selectedEditor.resetTransform();
-
-			exportBtn.onclick = async () => {
-				if (!selectedEditor) return;
-				const data = await selectedEditor.exportImage();
-				const a = document.createElement("a");
-				a.href = data;
-				a.download = "gestro-selected.png";
-				a.click();
-			};
 
 			fileInput.onchange = (e) => {
 				const file = e.target.files[0];
@@ -323,7 +301,6 @@
 
 			updateSliderProgress(zoomSlider);
 			updateSliderProgress(rotateSlider);
-			updateHistoryButtons();
 		});
 	</script>
 
