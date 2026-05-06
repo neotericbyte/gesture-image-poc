@@ -11,7 +11,7 @@ let html = fs.readFileSync(examplePath, "utf-8");
 // replace import path
 html = html.replace(
   'import "../src/gestro-image.js";',
-  'import "./gestro-image.esm.js";'
+  'import "./gestro.esm.js";'
 );
 
 // ensure dist exists
